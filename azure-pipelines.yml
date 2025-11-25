@@ -1,36 +1,64 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
-
 trigger:
 - main
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: 'ubuntu-latest'
 
 steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+- task: JavaToolInstaller@0
+  inputs:
+    versionSpec: '17'
+    jdkArchitectureOption: 'x64'
+    jdkSourceOption: 'PreInstalled'
+  displayName: 'Setup Java 17'
 
 - script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+    echo "Java Version:"
+    java -version
+    echo "Javac Version:"
+    javac -version
+  displayName: 'Verify Java Installation'
 
+- script: |
+    echo "Compiling Java files from src directory..."
+    cd src
+    javac *.java
+    echo "Compilation completed successfully"
+  displayName: 'Compile Java Files'
 
-- task: Maven@4
+- script: |
+    echo "Running Java application..."
+    cd src
+    java Main
+  displayName: 'Run Java Application'
+
+- script: |
+    echo "Creating JAR file..."
+    echo "Main-Class: Main" > manifest.txt
+    cd src
+    jar cfm ../myapp.jar ../manifest.txt *.class
+    cd ..
+    echo "JAR file created: myapp.jar"
+  displayName: 'Create Executable JAR'
+
+- script: |
+    echo "Testing JAR file execution..."
+    java -jar myapp.jar
+  displayName: 'Test JAR Execution'
+
+- task: PublishBuildArtifacts@1
   inputs:
-    mavenPomFile: 'pom.xml'
-    publishJUnitResults: true
-    testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    javaHomeOption: 'JDKVersion'
-    mavenVersionOption: 'Default'
-    mavenAuthenticateFeed: false
-    effectivePomSkip: false
-    sonarQubeRunAnalysis: false
-    goals: 'package' 
-    jdkArchitectureOption: 'x64'
-    jdkVersionOption: 'default'
-    mavenOptions: '-Xmx3072m'
-    
+    PathtoPublish: 'myapp.jar'
+    ArtifactName: 'java-app'
+    publishLocation: 'Container'
+  displayName: 'Publish JAR Artifact'
+
+- script: |
+    echo "Cleaning up temporary files..."
+    rm -f manifest.txt
+    cd src
+    rm -f *.class
+    cd ..
+    echo "Cleanup completed"
+  displayName: 'Cleanup Temporary Files'
+  condition: always()
