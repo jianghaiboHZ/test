@@ -25,7 +25,7 @@ pr:
 variables:
   # 项目基本信息
   project.name: 'my-spring-boot-app'
-  java.version: '17'
+  java.version: '17.0.16.8'
   maven.version: '3.9.11'
   
   # 构建配置
@@ -71,22 +71,13 @@ stages:
       clean: true
       displayName: '📥 检出源代码'
     
-   # 自动安装 Java 17
+    # 步骤2: 设置Java环境
     - task: JavaToolInstaller@0
-      displayName: '☕ 安装 Java 17'
+      displayName: '☕ 安装 Java $(java.version)'
       inputs:
-        versionSpec: '17'
+        versionSpec: $(java.version)
         jdkArchitectureOption: 'x64'
         jdkSourceOption: 'PreInstalled'
-    
-    # 验证 Java 安装
-    - script: |
-        echo "Java 版本:"
-        java -version
-        echo "Javac 版本:"
-        javac -version
-        echo "JAVA_HOME: $JAVA_HOME"
-      displayName: '🔍 验证 Java 安装'
     
     # 步骤3: 缓存Maven依赖（提升构建速度）
     - task: Cache@2
