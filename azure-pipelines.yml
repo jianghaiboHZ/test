@@ -26,7 +26,7 @@ variables:
   # 项目基本信息
   project.name: 'my-spring-boot-app'
   java.version: '17'
-  maven.version: '3.8.6'
+  maven.version: '3.9.11'
   
   # 构建配置
   build.configuration: 'Release'
