@@ -1,64 +1,132 @@
+# Azure DevOps 流水线配置 - Spring Boot Maven 项目
+# 此配置包含CI/CD完整流程，从代码编译到Azure Web App部署
+
+# 触发器配置 - 定义何时自动运行管道
 trigger:
-- main
+  branches:
+    include:
+    - main          # 主分支推送触发
+    - develop       # 开发分支推送触发
+    - release/*     # 发布分支触发
+  paths:
+    exclude:        # 排除文档变更触发
+    - README.md
+    - '**/*.md'
+    - 'docs/**'
 
-pool:
-  vmImage: 'ubuntu-latest'
+# Pull Request 验证 - 代码合并前质量门控
+pr:
+  branches:
+    include:
+    - main
+    - develop
 
-steps:
-- task: JavaToolInstaller@0
-  inputs:
-    versionSpec: '17'
-    jdkArchitectureOption: 'x64'
-    jdkSourceOption: 'PreInstalled'
-  displayName: 'Setup Java 17'
+# 全局变量定义
+variables:
+  # 项目基本信息
+  project.name: 'my-spring-boot-app'
+  java.version: '17'
+  maven.version: '3.8.6'
+  
+  # 构建配置
+  build.configuration: 'Release'
+  maven.opts: '-DskipTests -Dspring.profiles.active=ci'
+  
+  # Azure资源配置（这些值可在管道变量中覆盖）
+  azure.subscription: 'your-azure-service-connection'
+  webapp.name: 'my-spring-app'
+  
+  # 功能开关
+  run.integration.tests: 'false'
+  deploy.to.production: 'false'
 
-- script: |
-    echo "Java Version:"
-    java -version
-    echo "Javac Version:"
-    javac -version
-  displayName: 'Verify Java Installation'
+# 缓存配置 - 加速后续构建
+resources:
+  repositories:
+  - repository: self
+    type: git
 
-- script: |
-    echo "Compiling Java files from src directory..."
-    cd src
-    javac *.java
-    echo "Compilation completed successfully"
-  displayName: 'Compile Java Files'
+# 管道阶段定义
+stages:
 
-- script: |
-    echo "Running Java application..."
-    cd src
-    java Main
-  displayName: 'Run Java Application'
+# ==================== 阶段1: 代码质量与编译 ====================
+- stage: Build
+  displayName: '🔨 构建与代码检查'
+  jobs:
+  - job: BuildAndTest
+    displayName: '编译和测试'
+    pool:
+      vmImage: 'ubuntu-latest'  # 使用微软托管的Ubuntu代理
+    
+    steps:
+    # 步骤1: 检出代码
+    - checkout: self
+      clean: true
+      displayName: '📥 检出源代码'
+    
+    # 步骤2: 设置Java环境
+    - task: JavaToolInstaller@0
+      displayName: '☕ 安装 Java $(java.version)'
+      inputs:
+        versionSpec: $(java.version)
+        jdkArchitectureOption: 'x64'
+        jdkSourceOption: 'PreInstalled'
+    
+    # 步骤3: 缓存Maven依赖（提升构建速度）
+    - task: Cache@2
+      displayName: '💾 缓存 Maven 依赖'
+      inputs:
+        key: 'maven | "$(Agent.OS)" | pom.xml'
+        restoreKeys: |
+          maven | "$(Agent.OS)"
+        path: $(Pipeline.Workspace)/.m2/repository
+    
+    # 步骤4: 编译代码
+    - task: Maven@4
+      displayName: '⚙️ 编译项目'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'compile'
+        options: '$(maven.opts)'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: $(java.version)
+        publishJUnitResults: false
+    
+    # 步骤5: 运行单元测试
+    - task: Maven@4
+      displayName: '🧪 运行单元测试'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'test'
+        options: '$(maven.opts)'
+        javaHomeOption: 'JDKVersion'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+    
+    # 步骤6: 打包应用
+    - task: Maven@4
+      displayName: '📦 打包应用'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'package'
+        options: '$(maven.opts)'
+        javaHomeOption: 'JDKVersion'
+    
+    # 步骤7: 发布测试结果
+    - task: PublishTestResults@2
+      displayName: '📋 发布测试结果'
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        mergeTestResults: true
+        testRunTitle: '单元测试结果'
+    
+    # 步骤8: 发布构建产物
+    - task: PublishBuildArtifacts@1
+      displayName: '📤 发布JAR包'
+      inputs:
+        PathtoPublish: 'target/*.jar'
+        ArtifactName: 'application'
+        publishLocation: 'Container'
 
-- script: |
-    echo "Creating JAR file..."
-    echo "Main-Class: Main" > manifest.txt
-    cd src
-    jar cfm ../myapp.jar ../manifest.txt *.class
-    cd ..
-    echo "JAR file created: myapp.jar"
-  displayName: 'Create Executable JAR'
 
-- script: |
-    echo "Testing JAR file execution..."
-    java -jar myapp.jar
-  displayName: 'Test JAR Execution'
-
-- task: PublishBuildArtifacts@1
-  inputs:
-    PathtoPublish: 'myapp.jar'
-    ArtifactName: 'java-app'
-    publishLocation: 'Container'
-  displayName: 'Publish JAR Artifact'
-
-- script: |
-    echo "Cleaning up temporary files..."
-    rm -f manifest.txt
-    cd src
-    rm -f *.class
-    cd ..
-    echo "Cleanup completed"
-  displayName: 'Cleanup Temporary Files'
-  condition: always()
