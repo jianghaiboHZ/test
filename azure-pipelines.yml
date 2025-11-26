@@ -56,7 +56,8 @@ stages:
   - job: BuildAndTest
     displayName: '编译和测试'
     pool:
-      vmImage: 'ubuntu-latest'  # 使用微软托管的Ubuntu代理
+      vmImage: 'MySelfHostedAgents'
+      # vmImage: 'ubuntu-latest'  # 使用微软托管的Ubuntu代理
     
     steps:
     # 步骤1: 检出代码
