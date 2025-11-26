@@ -71,13 +71,15 @@ stages:
       clean: true
       displayName: '📥 检出源代码'
     
-    # 步骤2: 设置Java环境
+    # 步骤2: 设置Java环境    
+    # 使用 Microsoft 的 Java 分发
     - task: JavaToolInstaller@0
-      displayName: '☕ 安装 Java $(java.version)'
+      displayName: '☕ 安装 Java (Microsoft)'
       inputs:
-        versionSpec: '17'  # 只指定主版本
+        versionSpec: '17'
         jdkArchitectureOption: 'x64'
         jdkSourceOption: 'PreInstalled'
+        jdkVersionOption: '1.17'  # 使用 Microsoft 提供的版本
     
     # 验证 Java 安装
     - script: |
