@@ -71,13 +71,22 @@ stages:
       clean: true
       displayName: '📥 检出源代码'
     
-    # 步骤2: 设置Java环境
+   # 自动安装 Java 17
     - task: JavaToolInstaller@0
-      displayName: '☕ 安装 Java $(java.version)'
+      displayName: '☕ 安装 Java 17'
       inputs:
-        versionSpec: $(java.version)
+        versionSpec: '17'
         jdkArchitectureOption: 'x64'
         jdkSourceOption: 'PreInstalled'
+    
+    # 验证 Java 安装
+    - script: |
+        echo "Java 版本:"
+        java -version
+        echo "Javac 版本:"
+        javac -version
+        echo "JAVA_HOME: $JAVA_HOME"
+      displayName: '🔍 验证 Java 安装'
     
     # 步骤3: 缓存Maven依赖（提升构建速度）
     - task: Cache@2
