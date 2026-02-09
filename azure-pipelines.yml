@@ -9,8 +9,8 @@ resources:
   repositories:
     - repository: sqlscripts  # 逻辑别名，用于后续路径
       type: git
-      name: '你的组织名/数据库迁移仓库名' # 例如: 'YourCompany/database-migrations'
-      endpoint: 'github-sqlscripts-connection' # 引用步骤1.6中创建的Git服务连接
+      name: 'jianghaiboHZ/test' # 例如: 'YourCompany/database-migrations'
+      endpoint: 'github.com_jianghaiboHZ' # 引用步骤1.6中创建的Git服务连接
       ref: 'main'
 
 # 2. 引用在DevOps门户中创建的变量组
