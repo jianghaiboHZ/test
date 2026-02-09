@@ -1,70 +1,98 @@
-# File: azure-pipelines.yml
 trigger:
   branches:
     include:
-      - dev
       - main
-  paths:
-    exclude:
-      - '**/*.md'
-      - 'docs/**'
+      - dev
 
-pool:
-  vmImage: 'ubuntu-latest'
+# 1. 关键：如何引用第二个仓库（SQL脚本库）
+resources:
+  repositories:
+    - repository: sqlscripts  # 逻辑别名，用于后续路径
+      type: git
+      name: '你的组织名/数据库迁移仓库名' # 例如: 'YourCompany/database-migrations'
+      endpoint: 'github-sqlscripts-connection' # 引用步骤1.6中创建的Git服务连接
+      ref: 'main'
 
+# 2. 引用在DevOps门户中创建的变量组
 variables:
-  MAVEN_CACHE_FOLDER: '.m2/repository'
-  JAVA_VERSION: '17'
-  # 根据分支设置环境变量
-  ${{ if eq(variables['Build.SourceBranchName'], 'main') }}:
-    artifactName: 'app-prod'
-  ${{ else }}:
-    artifactName: 'app-dev'
+  - group: dev-variables
+  - group: prod-variables
 
-steps:
-# Step 1: Cache Maven dependencies
-- task: Cache@2
-  inputs:
-    key: 'maven | "$(Agent.OS)" | pom.xml'
-    restoreKeys: |
-      maven | "$(Agent.OS)"
-    path: $(MAVEN_CACHE_FOLDER)
-  displayName: 'Cache Maven dependencies'
+stages:
+  # ---------- 阶段 1：构建 (CI) ----------
+  - stage: Build
+    displayName: '构建应用'
+    jobs:
+      - job: BuildJob
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '17'
+          - task: Maven@4
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean package'
+          # 发布JAR包，供后续阶段使用
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/target/*.jar'
+              ArtifactName: 'app_jar'
 
-# Step 2: Setup Java 17
-- task: JavaToolInstaller@0
-  inputs:
-    versionSpec: $(JAVA_VERSION)
-    jdkArchitectureOption: 'x64'
-    jdkSourceOption: 'PreInstalled'
-  displayName: 'Setup JDK 17'
+  # ---------- 阶段 2：部署到开发环境 ----------
+  - stage: Deploy_Dev
+    displayName: '部署到开发环境'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/dev'))
+    jobs:
+      - deployment: DeployDevJob
+        environment: 'dev' # 引用在DevOps门户中创建的环境
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # 任务 2.1：执行数据库变更（失败则整个阶段失败）
+                - task: AzureSQLDatabaseDeployment@1
+                  inputs:
+                    azureSubscription: 'azure-prod-connection' # 引用步骤1.6中创建的Azure服务连接
+                    AuthenticationType: 'azureActiveDirectory' # 使用托管身份
+                    ServerName: '$(SQL_SERVER)' # 变量来自 dev-variables 组
+                    DatabaseName: '$(SQL_DATABASE)'
+                    deployType: 'SqlTask'
+                    # 关键路径：通过别名引用第二个仓库中的文件
+                    SqlFile: '$(Pipeline.Workspace)/sqlscripts/YourAppName/dev/*.sql'
+                # 任务 2.2：部署应用
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: 'azure-prod-connection'
+                    appType: 'webAppLinux'
+                    appName: '$(APP_SERVICE_NAME)'
+                    package: '$(Pipeline.Workspace)/app_jar/*.jar'
 
-# Step 3: Maven build with tests
-- task: Maven@4
-  inputs:
-    mavenPomFile: 'pom.xml'
-    goals: 'clean package'
-    options: '-B -DskipTests=false -Dmaven.test.failure.ignore=false'
-    javaHomeOption: 'JDKVersion'
-    jdkVersionOption: $(JAVA_VERSION)
-    jdkArchitectureOption: 'x64'
-    publishJUnitResults: true
-    testResultsFiles: '**/surefire-reports/TEST-*.xml'
-  displayName: 'Maven build and test'
-
-# Step 4: Publish test results
-- task: PublishTestResults@2
-  inputs:
-    testResultsFormat: 'JUnit'
-    testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    testRunTitle: 'Unit Tests - $(Build.SourceBranchName)'
-  displayName: 'Publish test results'
-  condition: succeededOrFailed()
-
-# Step 5: Publish JAR artifact
-- task: PublishBuildArtifacts@1
-  inputs:
-    PathtoPublish: '$(Build.SourcesDirectory)/target/*.jar'
-    ArtifactName: '$(artifactName)'
-    publishLocation: 'Container'
-  displayName: 'Publish JAR artifact'
+  # ---------- 阶段 3：部署到生产环境（含审批） ----------
+  - stage: Deploy_Prod
+    displayName: '部署到生产环境'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployProdJob
+        environment: 'prod' # 此环境已配置审批，部署将在此暂停
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureSQLDatabaseDeployment@1
+                  inputs:
+                    azureSubscription: 'azure-prod-connection'
+                    AuthenticationType: 'azureActiveDirectory'
+                    ServerName: '$(PROD_SQL_SERVER)' # 变量来自 prod-variables 组
+                    DatabaseName: '$(PROD_SQL_DATABASE)'
+                    deployType: 'SqlTask'
+                    SqlFile: '$(Pipeline.Workspace)/sqlscripts/YourAppName/prod/*.sql'
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: 'azure-prod-connection'
+                    appType: 'webAppLinux'
+                    appName: '$(PROD_APP_SERVICE_NAME)'
+                    package: '$(Pipeline.Workspace)/app_jar/*.jar'
