@@ -1,148 +1,70 @@
-# Azure DevOps 流水线配置 - Spring Boot Maven 项目
-# 此配置包含CI/CD完整流程，从代码编译到Azure Web App部署
-
-# 触发器配置 - 定义何时自动运行管道
+# File: azure-pipelines.yml
 trigger:
   branches:
     include:
-    - main          # 主分支推送触发
-    - develop       # 开发分支推送触发
-    - release/*     # 发布分支触发
+      - dev
+      - main
   paths:
-    exclude:        # 排除文档变更触发
-    - README.md
-    - '**/*.md'
-    - 'docs/**'
+    exclude:
+      - '**/*.md'
+      - 'docs/**'
 
-# Pull Request 验证 - 代码合并前质量门控
-pr:
-  branches:
-    include:
-    - main
-    - develop
+pool:
+  vmImage: 'ubuntu-latest'
 
-# 全局变量定义
 variables:
-  # 项目基本信息
-  project.name: 'my-spring-boot-app'
-  java.version: '17'
-  maven.version: '3.9.11'
-  
-  # 构建配置
-  build.configuration: 'Release'
-  maven.opts: '-DskipTests -Dspring.profiles.active=ci'
-  
-  # Azure资源配置（这些值可在管道变量中覆盖）
-  azure.subscription: 'your-azure-service-connection'
-  webapp.name: 'my-spring-app'
-  
-  # 功能开关
-  run.integration.tests: 'false'
-  deploy.to.production: 'false'
+  MAVEN_CACHE_FOLDER: '.m2/repository'
+  JAVA_VERSION: '17'
+  # 根据分支设置环境变量
+  ${{ if eq(variables['Build.SourceBranchName'], 'main') }}:
+    artifactName: 'app-prod'
+  ${{ else }}:
+    artifactName: 'app-dev'
 
-# 缓存配置 - 加速后续构建
-resources:
-  repositories:
-  - repository: self
-    type: git
+steps:
+# Step 1: Cache Maven dependencies
+- task: Cache@2
+  inputs:
+    key: 'maven | "$(Agent.OS)" | pom.xml'
+    restoreKeys: |
+      maven | "$(Agent.OS)"
+    path: $(MAVEN_CACHE_FOLDER)
+  displayName: 'Cache Maven dependencies'
 
-# 管道阶段定义
-stages:
+# Step 2: Setup Java 17
+- task: JavaToolInstaller@0
+  inputs:
+    versionSpec: $(JAVA_VERSION)
+    jdkArchitectureOption: 'x64'
+    jdkSourceOption: 'PreInstalled'
+  displayName: 'Setup JDK 17'
 
-# ==================== 阶段1: 代码质量与编译 ====================
-- stage: Build
-  displayName: '🔨 构建与代码检查'
-  jobs:
-  - job: BuildAndTest
-    displayName: '编译和测试'
-    # pool: 'MySelfHostedAgents'
-    
-    pool:
-      name: 'MySelfHostedAgents'
-      demands:
-        - java
+# Step 3: Maven build with tests
+- task: Maven@4
+  inputs:
+    mavenPomFile: 'pom.xml'
+    goals: 'clean package'
+    options: '-B -DskipTests=false -Dmaven.test.failure.ignore=false'
+    javaHomeOption: 'JDKVersion'
+    jdkVersionOption: $(JAVA_VERSION)
+    jdkArchitectureOption: 'x64'
+    publishJUnitResults: true
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'
+  displayName: 'Maven build and test'
 
-    # pool:
-      # vmImage: 'ubuntu-latest'  # 使用微软托管的Ubuntu代理
-    
-    steps:
-    # 步骤1: 检出代码
-    - checkout: self
-      clean: true
-      displayName: '📥 检出源代码'
-    
-    # 步骤2: 设置Java环境    
-    # 使用 Microsoft 的 Java 分发
-    - task: JavaToolInstaller@0
-      displayName: '☕ 安装 Java (Microsoft)'
-      inputs:
-        versionSpec: '17'
-        jdkArchitectureOption: 'x64'
-        jdkSourceOption: 'PreInstalled'
-        jdkVersionOption: '1.17'  # 使用 Microsoft 提供的版本
-    
-    # 验证 Java 安装
-    - script: |
-        echo "验证 Java 安装:"
-        java -version
-        javac -version
-      displayName: '🔍 验证 Java 环境'
-    
-    # 步骤3: 缓存Maven依赖（提升构建速度）
-    - task: Cache@2
-      displayName: '💾 缓存 Maven 依赖'
-      inputs:
-        key: 'maven | "$(Agent.OS)" | pom.xml'
-        restoreKeys: |
-          maven | "$(Agent.OS)"
-        path: $(Pipeline.Workspace)/.m2/repository
-    
-    # 步骤4: 编译代码
-    - task: Maven@4
-      displayName: '⚙️ 编译项目'
-      inputs:
-        mavenPomFile: 'pom.xml'
-        goals: 'compile'
-        options: '$(maven.opts)'
-        javaHomeOption: 'JDKVersion'
-        jdkVersionOption: $(java.version)
-        publishJUnitResults: false
-    
-    # 步骤5: 运行单元测试
-    - task: Maven@4
-      displayName: '🧪 运行单元测试'
-      inputs:
-        mavenPomFile: 'pom.xml'
-        goals: 'test'
-        options: '$(maven.opts)'
-        javaHomeOption: 'JDKVersion'
-        publishJUnitResults: true
-        testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    
-    # 步骤6: 打包应用
-    - task: Maven@4
-      displayName: '📦 打包应用'
-      inputs:
-        mavenPomFile: 'pom.xml'
-        goals: 'package'
-        options: '$(maven.opts)'
-        javaHomeOption: 'JDKVersion'
-    
-    # 步骤7: 发布测试结果
-    - task: PublishTestResults@2
-      displayName: '📋 发布测试结果'
-      inputs:
-        testResultsFormat: 'JUnit'
-        testResultsFiles: '**/surefire-reports/TEST-*.xml'
-        mergeTestResults: true
-        testRunTitle: '单元测试结果'
-    
-    # 步骤8: 发布构建产物
-    - task: PublishBuildArtifacts@1
-      displayName: '📤 发布JAR包'
-      inputs:
-        PathtoPublish: 'target/*.jar'
-        ArtifactName: 'application'
-        publishLocation: 'Container'
+# Step 4: Publish test results
+- task: PublishTestResults@2
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'
+    testRunTitle: 'Unit Tests - $(Build.SourceBranchName)'
+  displayName: 'Publish test results'
+  condition: succeededOrFailed()
 
-
+# Step 5: Publish JAR artifact
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: '$(Build.SourcesDirectory)/target/*.jar'
+    ArtifactName: '$(artifactName)'
+    publishLocation: 'Container'
+  displayName: 'Publish JAR artifact'
