@@ -11,8 +11,8 @@ trigger:
       - dev
 
 variables:
-  - group: dev-variables
-  - group: prod-variables
+  - group: jhb-dev-variables
+  - group: jhb-prod-variables
 
 stages:
 
@@ -100,7 +100,7 @@ stages:
               - task: AzureWebApp@1
                 displayName: '部署到开发 App Service'
                 inputs:
-                  azureSubscription: 'azure-prod-connection'
+                  azureSubscription: 'toyotecdap-test'
                   appType: 'webAppLinux'
                   appName: '$(APP_SERVICE_NAME)'
                   package: '$(Pipeline.Workspace)/app_jar/*.jar'
@@ -127,7 +127,7 @@ stages:
               - task: AzureWebApp@1
                 displayName: '部署到生产 App Service'
                 inputs:
-                  azureSubscription: 'azure-prod-connection'
+                  azureSubscription: 'toyotecdap-test'
                   appType: 'webAppLinux'
                   appName: '$(PROD_APP_SERVICE_NAME)'
                   package: '$(Pipeline.Workspace)/app_jar/*.jar'
