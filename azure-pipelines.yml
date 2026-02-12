@@ -2,7 +2,7 @@
 # Azure DevOps CI/CD 流水线
 # Spring Boot + 前后端分离
 # Windows 自托管 Agent
-# 企业稳定最终修复版
+# 企业稳定最终修复版（已修复 Maven 执行目录问题）
 # ============================================
 
 trigger:
@@ -29,7 +29,6 @@ variables:
 
   - name: MAVEN_LOCAL_REPO
     value: '$(Pipeline.Workspace)/.m2/repository'
-
 
 stages:
 
@@ -63,10 +62,9 @@ stages:
           displayName: '缓存工具目录'
 
 # -----------------------------------------------------
-# 2️⃣ 初始化 JDK（即时生效版）
+# 2️⃣ 初始化 JDK
 # -----------------------------------------------------
         - powershell: |
-
             $jdkRoot = "$(TOOL_CACHE)"
             $jdkFolder = Get-ChildItem $jdkRoot -Directory -Filter "jdk-$(JDK_VERSION)*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -86,12 +84,9 @@ stages:
             }
 
             $jdkHome = $jdkFolder.FullName
-
-            # 当前步骤立即生效
             $env:JAVA_HOME = $jdkHome
             $env:PATH = "$jdkHome\bin;$env:PATH"
 
-            # 后续步骤生效
             Write-Host "##vso[task.setvariable variable=JAVA_HOME]$jdkHome"
             Write-Host "##vso[task.prependpath]$jdkHome\bin"
 
@@ -99,10 +94,9 @@ stages:
           displayName: '初始化 JDK'
 
 # -----------------------------------------------------
-# 3️⃣ 初始化 Node（即时生效版）
+# 3️⃣ 初始化 Node
 # -----------------------------------------------------
         - powershell: |
-
             $nodeRoot = "$(TOOL_CACHE)"
             $nodeFolder = "$nodeRoot\node-v$(NODE_VERSION)-win-x64"
 
@@ -119,10 +113,7 @@ stages:
               Expand-Archive $zipPath -DestinationPath $nodeRoot -Force
             }
 
-            # 当前步骤立即生效
             $env:PATH = "$nodeFolder;$env:PATH"
-
-            # 后续步骤生效
             Write-Host "##vso[task.prependpath]$nodeFolder"
 
             node -v
@@ -135,16 +126,16 @@ stages:
         - task: Cache@2
           inputs:
             key: '"npm" | "$(Agent.OS)" | web_frontend/package-lock.json'
-            path: '$(System.DefaultWorkingDirectory)/web_frontend/node_modules'
+            path: '$(Build.SourcesDirectory)/web_frontend/node_modules'
           displayName: '缓存 node_modules'
 
 # -----------------------------------------------------
-# 5️⃣ 构建前端
+# 5️⃣ 构建前端（明确目录）
 # -----------------------------------------------------
         - powershell: |
-            cd web_frontend
             npm ci
             npm run build
+          workingDirectory: '$(Build.SourcesDirectory)/web_frontend'
           displayName: '构建前端'
 
 # -----------------------------------------------------
@@ -152,17 +143,16 @@ stages:
 # -----------------------------------------------------
         - task: CopyFiles@2
           inputs:
-            sourceFolder: '$(System.DefaultWorkingDirectory)/web_frontend/dist'
+            sourceFolder: '$(Build.SourcesDirectory)/web_frontend/dist'
             contents: '**'
-            targetFolder: '$(System.DefaultWorkingDirectory)/src/main/resources/static'
+            targetFolder: '$(Build.SourcesDirectory)/src/main/resources/static'
             overwrite: true
           displayName: '复制前端到后端'
 
 # -----------------------------------------------------
-# 7️⃣ 初始化 Maven（即时生效版）
+# 7️⃣ 初始化 Maven
 # -----------------------------------------------------
         - powershell: |
-
             $mavenRoot = "$(TOOL_CACHE)"
             $mavenFolder = "$mavenRoot\apache-maven-$(MAVEN_VERSION)"
 
@@ -179,11 +169,9 @@ stages:
               Expand-Archive $zipPath -DestinationPath $mavenRoot -Force
             }
 
-            # 当前步骤立即生效
             $env:MAVEN_HOME = $mavenFolder
             $env:PATH = "$mavenFolder\bin;$env:PATH"
 
-            # 后续步骤生效
             Write-Host "##vso[task.setvariable variable=MAVEN_HOME]$mavenFolder"
             Write-Host "##vso[task.prependpath]$mavenFolder\bin"
 
@@ -200,16 +188,16 @@ stages:
           displayName: '缓存 Maven 仓库'
 
 # -----------------------------------------------------
-# 9️⃣ Maven 构建
+# 9️⃣ Maven 构建（关键修复：指定目录）
 # -----------------------------------------------------
         - powershell: |
-
             New-Item -ItemType Directory -Force -Path "$(MAVEN_LOCAL_REPO)"
 
             mvn clean package `
               -T 1C `
               -Dmaven.repo.local=$(MAVEN_LOCAL_REPO) `
               -DskipTests
+          workingDirectory: '$(Build.SourcesDirectory)'
           displayName: 'Maven 构建'
 
 # -----------------------------------------------------
@@ -217,10 +205,9 @@ stages:
 # -----------------------------------------------------
         - task: PublishBuildArtifacts@1
           inputs:
-            PathtoPublish: '$(System.DefaultWorkingDirectory)/target'
+            PathtoPublish: '$(Build.SourcesDirectory)/target'
             ArtifactName: 'app_jar'
           displayName: '发布构建产物'
-
 
 # =====================================================
 # Stage 2 - Dev 部署
@@ -250,7 +237,6 @@ stages:
                   appName: '$(APP_SERVICE_NAME)'
                   package: '$(Pipeline.Workspace)/app_jar/*.jar'
                   runtimeStack: 'JAVA|21'
-
 
 # =====================================================
 # Stage 3 - Prod 部署
