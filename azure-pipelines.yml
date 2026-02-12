@@ -1,152 +1,134 @@
 # ============================================
-# Azure DevOps 端到端 CI/CD 流水线
-# 适用于：前后端分离的 Spring Boot + Azure SQL 项目
+# Azure DevOps CI/CD 流水线
+# 适用于：Spring Boot + 前端分离项目
+# 前端目录：web_frontend
 # ============================================
 
-# 1. 触发器：当代码推送到 main 或 dev 分支时触发
 trigger:
   branches:
     include:
       - main
       - dev
 
-# 2. 资源：引用第二个 Git 仓库（存放数据库变更脚本）
-resources:
-  repositories:
-    - repository: sqlscripts  # 逻辑别名，将在路径中使用
-      type: git
-      name: 'jianghaiboHZ/test' # 【需修改】替换为您的 SQL 脚本仓库全名
-      endpoint: 'githubtest' # 【需修改】引用在 DevOps 中创建的 Git 服务连接名称
-      ref: 'main'
-
-# 3. 变量：链接在 DevOps 门户中创建的变量组
 variables:
-  - group: dev-variables   # 开发环境变量组
-  - group: prod-variables  # 生产环境变量组
+  - group: dev-variables
+  - group: prod-variables
 
-# 4. 核心阶段定义
 stages:
-  # ---------- 阶段 1：构建 (CI) ----------
-  - stage: Build
-    displayName: '构建应用（前后端）'
-    jobs:
-      - job: BuildJob
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          # 步骤 1.1：安装 Java 17
-          - task: JavaToolInstaller@0
-            inputs:
-              versionSpec: '17'
-            displayName: '安装 JDK 17'
 
-          # 步骤 1.2：安装 Node.js（用于前端构建）
-          - task: NodeTool@0
-            inputs:
-              versionSpec: '18.x' # 【建议修改】根据您的前端项目要求指定版本，如 16.x, 20.x
-            displayName: '安装 Node.js'
+# =====================================================
+# Stage 1 - Build（前后端一起构建）
+# =====================================================
+- stage: Build
+  displayName: '构建应用（前后端）'
+  jobs:
+    - job: BuildJob
+      pool:
+        vmImage: 'ubuntu-latest'
 
-          # 步骤 1.3：缓存前端依赖 (node_modules)，加速构建
-          - task: Cache@2
-            inputs:
-              key: '"npm" | "$(Agent.OS)" | frontend/package-lock.json' # 【需修改】`frontend` 应替换为您的前端代码目录名
-              restoreKeys: |
-                npm | "$(Agent.OS)"
-              path: '$(System.DefaultWorkingDirectory)/frontend/node_modules' # 【需修改】同上
-            displayName: '缓存 node_modules'
+      steps:
 
-          # 步骤 1.4：编译前端项目
-          - script: |
-              cd frontend # 【必须修改】切换到您的前端项目根目录，如 `web`， `ui`
-              npm ci        # 清洁安装，严格依赖 package-lock.json
-              npm run build # 执行构建，请确保 package.json 中定义了 "build" 脚本
-            displayName: '编译前端'
-            # 此步骤失败将导致整个构建阶段失败
+        # 1️⃣ 安装 JDK 21
+        - task: JavaToolInstaller@0
+          inputs:
+            versionSpec: '21'
+          displayName: '安装 JDK 21'
 
-          # 步骤 1.5：将前端构建产物复制到 Spring Boot 静态资源目录
-          - task: CopyFiles@2
-            inputs:
-              sourceFolder: '$(System.DefaultWorkingDirectory)/frontend/dist' # 【需修改】前端构建输出目录，常见为 `dist`, `build`
-              contents: '**'
-              targetFolder: '$(System.DefaultWorkingDirectory)/src/main/resources/static'
-              overwrite: true
-            displayName: '复制前端文件到后端'
+        # 2️⃣ 安装 Node.js
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '18.x'
+          displayName: '安装 Node.js'
 
-          # 步骤 1.6：使用 Maven 打包（此时 JAR 已包含前端资源）
-          - task: Maven@4
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'clean package'
-              # options: '-DskipTests' # 【可选】在 CI 中跳过测试以加速，生产流水线建议开启
-            displayName: 'Maven 打包'
+        # 3️⃣ 缓存 node_modules
+        - task: Cache@2
+          inputs:
+            key: '"npm" | "$(Agent.OS)" | web_frontend/package-lock.json'
+            restoreKeys: |
+              npm | "$(Agent.OS)"
+            path: '$(System.DefaultWorkingDirectory)/web_frontend/node_modules'
+          displayName: '缓存 node_modules'
 
-          # 步骤 1.7：发布最终的 JAR 包，供后续部署阶段使用
-          - task: PublishBuildArtifacts@1
-            inputs:
-              PathtoPublish: '$(System.DefaultWorkingDirectory)/target/*.jar'
-              ArtifactName: 'app_jar'
-            displayName: '发布构建产物'
+        # 4️⃣ 构建前端
+        - script: |
+            cd web_frontend
+            npm ci
+            npm run build
+          displayName: '编译前端'
 
-  # ---------- 阶段 2：部署到开发环境 ----------
-  - stage: Deploy_Dev
-    displayName: '部署到开发环境'
-    dependsOn: Build  # 依赖于 Build 阶段
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/dev'))
-    jobs:
-      - deployment: DeployDevJob
-        displayName: '部署作业'
-        environment: 'dev' # 引用在 DevOps 门户中创建的“环境”
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                # 任务 2.1：执行数据库变更
-                - task: AzureSQLDatabaseDeployment@1
-                  displayName: '执行开发数据库迁移'
-                  inputs:
-                    azureSubscription: 'azure-prod-connection' # 【需修改】引用您的 Azure 服务连接名称
-                    AuthenticationType: 'azureActiveDirectory' # 使用托管身份
-                    ServerName: '$(SQL_SERVER)'        # 变量来自 dev-variables 组
-                    DatabaseName: '$(SQL_DATABASE)'
-                    deployType: 'SqlTask'
-                    SqlFile: '$(Pipeline.Workspace)/sqlscripts/YourAppName/dev/*.sql' # 【需修改】`YourAppName` 替换为您的应用名
-                # 任务 2.2：部署应用
-                - task: AzureWebApp@1
-                  displayName: '部署到开发 App Service'
-                  inputs:
-                    azureSubscription: 'azure-prod-connection' # 【需修改】同上
-                    appType: 'webAppLinux'
-                    appName: '$(APP_SERVICE_NAME)'    # 变量来自 dev-variables 组
-                    package: '$(Pipeline.Workspace)/app_jar/*.jar'
-                    runtimeStack: 'JAVA|17'
+        # 5️⃣ 将前端 dist 复制到 Spring Boot 静态目录
+        - task: CopyFiles@2
+          inputs:
+            sourceFolder: '$(System.DefaultWorkingDirectory)/web_frontend/dist'
+            contents: '**'
+            targetFolder: '$(System.DefaultWorkingDirectory)/src/main/resources/static'
+            overwrite: true
+          displayName: '复制前端文件到后端'
 
-  # ---------- 阶段 3：部署到生产环境（含审批） ----------
-  - stage: Deploy_Prod
-    displayName: '部署到生产环境'
-    dependsOn: Build
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-    jobs:
-      - deployment: DeployProdJob
-        displayName: '部署作业'
-        environment: 'prod' # 此环境已配置审批，部署将在此暂停
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - task: AzureSQLDatabaseDeployment@1
-                  displayName: '执行生产数据库迁移'
-                  inputs:
-                    azureSubscription: 'azure-prod-connection' # 【需修改】引用您的 Azure 服务连接名称
-                    AuthenticationType: 'azureActiveDirectory'
-                    ServerName: '$(PROD_SQL_SERVER)'    # 变量来自 prod-variables 组
-                    DatabaseName: '$(PROD_SQL_DATABASE)'
-                    deployType: 'SqlTask'
-                    SqlFile: '$(Pipeline.Workspace)/sqlscripts/YourAppName/prod/*.sql' # 【需修改】同上
-                - task: AzureWebApp@1
-                  displayName: '部署到生产 App Service'
-                  inputs:
-                    azureSubscription: 'azure-prod-connection' # 【需修改】同上
-                    appType: 'webAppLinux'
-                    appName: '$(PROD_APP_SERVICE_NAME)' # 变量来自 prod-variables 组
-                    package: '$(Pipeline.Workspace)/app_jar/*.jar'
-                    runtimeStack: 'JAVA|17'
+        # 6️⃣ Maven 打包
+        - task: Maven@4
+          inputs:
+            mavenPomFile: 'pom.xml'
+            goals: 'clean package'
+          displayName: 'Maven 打包'
+
+        # 7️⃣ 发布 JAR
+        - task: PublishBuildArtifacts@1
+          inputs:
+            PathtoPublish: '$(System.DefaultWorkingDirectory)/target/*.jar'
+            ArtifactName: 'app_jar'
+          displayName: '发布构建产物'
+
+
+# =====================================================
+# Stage 2 - Dev 部署
+# =====================================================
+- stage: Deploy_Dev
+  displayName: '部署到开发环境'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/dev'))
+
+  jobs:
+    - deployment: DeployDevJob
+      displayName: '部署到 Dev'
+      environment: 'dev'
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: AzureWebApp@1
+                displayName: '部署到开发 App Service'
+                inputs:
+                  azureSubscription: 'azure-prod-connection'
+                  appType: 'webAppLinux'
+                  appName: '$(APP_SERVICE_NAME)'
+                  package: '$(Pipeline.Workspace)/app_jar/*.jar'
+                  runtimeStack: 'JAVA|21'
+
+
+# =====================================================
+# Stage 3 - Prod 部署（带审批）
+# =====================================================
+- stage: Deploy_Prod
+  displayName: '部署到生产环境'
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+
+  jobs:
+    - deployment: DeployProdJob
+      displayName: '部署到 Prod'
+      environment: 'prod'
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - task: AzureWebApp@1
+                displayName: '部署到生产 App Service'
+                inputs:
+                  azureSubscription: 'azure-prod-connection'
+                  appType: 'webAppLinux'
+                  appName: '$(PROD_APP_SERVICE_NAME)'
+                  package: '$(Pipeline.Workspace)/app_jar/*.jar'
+                  runtimeStack: 'JAVA|21'
