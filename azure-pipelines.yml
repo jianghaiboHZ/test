@@ -46,33 +46,22 @@ stages:
 
       steps:
 
-# -----------------------------------------------------
-# 0️⃣ 初始化工具目录
-# -----------------------------------------------------
         - powershell: |
             New-Item -ItemType Directory -Force -Path "$(TOOL_CACHE)"
           displayName: '初始化工具目录'
 
-# -----------------------------------------------------
-# 1️⃣ 缓存工具目录
-# -----------------------------------------------------
         - task: Cache@2
           inputs:
             key: '"tools" | "$(Agent.OS)"'
             path: '$(TOOL_CACHE)'
           displayName: '缓存工具目录'
 
-# -----------------------------------------------------
-# 2️⃣ 初始化 JDK
-# -----------------------------------------------------
         - powershell: |
             $jdkRoot = "$(TOOL_CACHE)"
             $jdkFolder = Get-ChildItem $jdkRoot -Directory -Filter "jdk-$(JDK_VERSION)*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
             if (!$jdkFolder) {
-
               Write-Host "Installing JDK $(JDK_VERSION)..."
-
               $zipPath = "$jdkRoot\jdk.zip"
 
               Invoke-WebRequest `
@@ -80,7 +69,6 @@ stages:
                 -OutFile $zipPath
 
               Expand-Archive $zipPath -DestinationPath $jdkRoot -Force
-
               $jdkFolder = Get-ChildItem $jdkRoot -Directory -Filter "jdk-*" | Select-Object -First 1
             }
 
@@ -94,17 +82,12 @@ stages:
             java -version
           displayName: '初始化 JDK'
 
-# -----------------------------------------------------
-# 3️⃣ 初始化 Node
-# -----------------------------------------------------
         - powershell: |
             $nodeRoot = "$(TOOL_CACHE)"
             $nodeFolder = "$nodeRoot\node-v$(NODE_VERSION)-win-x64"
 
             if (!(Test-Path "$nodeFolder\node.exe")) {
-
               Write-Host "Installing Node $(NODE_VERSION)..."
-
               $zipPath = "$nodeRoot\node.zip"
 
               Invoke-WebRequest `
@@ -121,27 +104,18 @@ stages:
             npm -v
           displayName: '初始化 Node.js'
 
-# -----------------------------------------------------
-# 4️⃣ 缓存 node_modules
-# -----------------------------------------------------
         - task: Cache@2
           inputs:
             key: '"npm" | "$(Agent.OS)" | web_frontend/package-lock.json'
             path: '$(Build.SourcesDirectory)/web_frontend/node_modules'
           displayName: '缓存 node_modules'
 
-# -----------------------------------------------------
-# 5️⃣ 构建前端（强制目录）
-# -----------------------------------------------------
         - powershell: |
             Set-Location "$(Build.SourcesDirectory)/web_frontend"
             npm ci
             npm run build
           displayName: '构建前端'
 
-# -----------------------------------------------------
-# 6️⃣ 复制前端资源到后端
-# -----------------------------------------------------
         - task: CopyFiles@2
           inputs:
             sourceFolder: '$(Build.SourcesDirectory)/web_frontend/dist'
@@ -150,17 +124,12 @@ stages:
             overwrite: true
           displayName: '复制前端到后端'
 
-# -----------------------------------------------------
-# 7️⃣ 初始化 Maven
-# -----------------------------------------------------
         - powershell: |
             $mavenRoot = "$(TOOL_CACHE)"
             $mavenFolder = "$mavenRoot\apache-maven-$(MAVEN_VERSION)"
 
             if (!(Test-Path "$mavenFolder\bin\mvn.cmd")) {
-
               Write-Host "Installing Maven $(MAVEN_VERSION)..."
-
               $zipPath = "$mavenRoot\maven.zip"
 
               Invoke-WebRequest `
@@ -179,18 +148,12 @@ stages:
             mvn -version
           displayName: '初始化 Maven'
 
-# -----------------------------------------------------
-# 8️⃣ 缓存 Maven 仓库
-# -----------------------------------------------------
         - task: Cache@2
           inputs:
             key: '"m2" | "$(Agent.OS)" | pom.xml'
             path: '$(MAVEN_LOCAL_REPO)'
           displayName: '缓存 Maven 仓库'
 
-# -----------------------------------------------------
-# 9️⃣ Maven 构建（彻底修复版）
-# -----------------------------------------------------
         - powershell: |
 
             Write-Host "当前目录："
@@ -212,14 +175,11 @@ stages:
 
             mvn clean package `
               -T 1C `
-              -Dmaven.repo.local=$(MAVEN_LOCAL_REPO) `
+              "-Dmaven.repo.local=$(MAVEN_LOCAL_REPO)" `
               -DskipTests
 
           displayName: 'Maven 构建'
 
-# -----------------------------------------------------
-# 🔟 发布 JAR
-# -----------------------------------------------------
         - task: PublishBuildArtifacts@1
           inputs:
             PathtoPublish: '$(Build.SourcesDirectory)/target'
