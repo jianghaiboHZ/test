@@ -2,7 +2,7 @@
 # Azure DevOps CI/CD 流水线
 # Spring Boot + 前后端分离
 # Windows 自托管 Agent
-# 全自动环境安装 + 缓存加速终极版
+# 企业级稳定终极版（增强修复）
 # ============================================
 
 trigger:
@@ -37,7 +37,7 @@ stages:
 # Stage 1 - Build
 # =====================================================
 - stage: Build
-  displayName: '构建应用（全自动环境）'
+  displayName: '构建应用（企业稳定版）'
 
   jobs:
     - job: BuildJob
@@ -45,6 +45,13 @@ stages:
         name: doujyou-self-hosted
 
       steps:
+
+# -----------------------------------------------------
+# 0️⃣ 创建工具目录（防止缓存还原失败）
+# -----------------------------------------------------
+        - powershell: |
+            New-Item -ItemType Directory -Force -Path "$(TOOL_CACHE)"
+          displayName: '初始化工具目录'
 
 # -----------------------------------------------------
 # 1️⃣ 缓存工具目录
@@ -56,17 +63,15 @@ stages:
           displayName: '缓存工具目录'
 
 # -----------------------------------------------------
-# 2️⃣ 自动安装 JDK 21
+# 2️⃣ 自动安装 JDK 21（稳定修复版）
 # -----------------------------------------------------
         - powershell: |
 
             $jdkHome = "$(TOOL_CACHE)\jdk-$(JDK_VERSION)"
 
-            if (!(Test-Path $jdkHome)) {
+            if (!(Test-Path "$jdkHome\bin\java.exe")) {
 
-              Write-Host "Downloading JDK $(JDK_VERSION)..."
-
-              New-Item -ItemType Directory -Force -Path "$(TOOL_CACHE)"
+              Write-Host "Installing JDK $(JDK_VERSION)..."
 
               $zipPath = "$(TOOL_CACHE)\jdk.zip"
 
@@ -77,14 +82,15 @@ stages:
               Expand-Archive $zipPath -DestinationPath "$(TOOL_CACHE)" -Force
 
               $folder = Get-ChildItem "$(TOOL_CACHE)" |
-                        Where-Object { $_.PSIsContainer -and $_.Name -like "jdk-$(JDK_VERSION)*" } |
+                        Where-Object { $_.PSIsContainer -and $_.Name -like "jdk-*" } |
+                        Sort-Object LastWriteTime -Descending |
                         Select-Object -First 1
 
-              Rename-Item $folder.FullName $jdkHome
+              Rename-Item $folder.FullName $jdkHome -Force
             }
 
-            $env:JAVA_HOME = $jdkHome
-            $env:PATH = "$jdkHome\bin;$env:PATH"
+            Write-Host "##vso[task.setvariable variable=JAVA_HOME]$jdkHome"
+            Write-Host "##vso[task.prependpath]$jdkHome\bin"
 
             java -version
           displayName: '初始化 JDK'
@@ -96,9 +102,9 @@ stages:
 
             $nodeHome = "$(TOOL_CACHE)\node"
 
-            if (!(Test-Path $nodeHome)) {
+            if (!(Test-Path "$nodeHome\node.exe")) {
 
-              Write-Host "Downloading Node.js $(NODE_VERSION)..."
+              Write-Host "Installing Node $(NODE_VERSION)..."
 
               $zipPath = "$(TOOL_CACHE)\node.zip"
 
@@ -108,10 +114,10 @@ stages:
 
               Expand-Archive $zipPath -DestinationPath "$(TOOL_CACHE)" -Force
 
-              Rename-Item "$(TOOL_CACHE)\node-v$(NODE_VERSION)-win-x64" $nodeHome
+              Rename-Item "$(TOOL_CACHE)\node-v$(NODE_VERSION)-win-x64" $nodeHome -Force
             }
 
-            $env:PATH = "$nodeHome;$env:PATH"
+            Write-Host "##vso[task.prependpath]$nodeHome"
 
             node -v
             npm -v
@@ -153,9 +159,9 @@ stages:
 
             $mavenHome = "$(TOOL_CACHE)\maven-$(MAVEN_VERSION)"
 
-            if (!(Test-Path $mavenHome)) {
+            if (!(Test-Path "$mavenHome\bin\mvn.cmd")) {
 
-              Write-Host "Downloading Maven $(MAVEN_VERSION)..."
+              Write-Host "Installing Maven $(MAVEN_VERSION)..."
 
               $zipPath = "$(TOOL_CACHE)\maven.zip"
 
@@ -165,11 +171,11 @@ stages:
 
               Expand-Archive $zipPath -DestinationPath "$(TOOL_CACHE)" -Force
 
-              Rename-Item "$(TOOL_CACHE)\apache-maven-$(MAVEN_VERSION)" $mavenHome
+              Rename-Item "$(TOOL_CACHE)\apache-maven-$(MAVEN_VERSION)" $mavenHome -Force
             }
 
-            $env:MAVEN_HOME = $mavenHome
-            $env:PATH = "$mavenHome\bin;$env:PATH"
+            Write-Host "##vso[task.setvariable variable=MAVEN_HOME]$mavenHome"
+            Write-Host "##vso[task.prependpath]$mavenHome\bin"
 
             mvn -version
           displayName: '初始化 Maven'
@@ -184,12 +190,9 @@ stages:
           displayName: '缓存 Maven 仓库'
 
 # -----------------------------------------------------
-# 9️⃣ Maven 构建（多线程加速）
+# 9️⃣ Maven 构建（并发 + 稳定）
 # -----------------------------------------------------
         - powershell: |
-
-            $env:MAVEN_HOME = "$(TOOL_CACHE)\maven-$(MAVEN_VERSION)"
-            $env:PATH = "$env:MAVEN_HOME\bin;$env:PATH"
 
             New-Item -ItemType Directory -Force -Path "$(MAVEN_LOCAL_REPO)"
 
@@ -197,17 +200,16 @@ stages:
               -T 1C `
               -Dmaven.repo.local=$(MAVEN_LOCAL_REPO) `
               -DskipTests
-          displayName: 'Maven 构建（并发加速）'
+          displayName: 'Maven 构建'
 
 # -----------------------------------------------------
-# 🔟 发布 JAR
+# 🔟 发布 JAR（路径修复版）
 # -----------------------------------------------------
         - task: PublishBuildArtifacts@1
           inputs:
             PathtoPublish: '$(System.DefaultWorkingDirectory)/target'
             ArtifactName: 'app_jar'
           displayName: '发布构建产物'
-
 
 
 # =====================================================
@@ -221,11 +223,16 @@ stages:
   jobs:
     - deployment: DeployDevJob
       environment: 'dev'
+      pool:
+        name: doujyou-self-hosted
 
       strategy:
         runOnce:
           deploy:
             steps:
+              - download: current
+                artifact: app_jar
+
               - task: AzureWebApp@1
                 inputs:
                   azureSubscription: 'toyotecdap-test'
@@ -246,11 +253,16 @@ stages:
   jobs:
     - deployment: DeployProdJob
       environment: 'prod'
+      pool:
+        name: doujyou-self-hosted
 
       strategy:
         runOnce:
           deploy:
             steps:
+              - download: current
+                artifact: app_jar
+
               - task: AzureWebApp@1
                 inputs:
                   azureSubscription: 'toyotecdap-test'
