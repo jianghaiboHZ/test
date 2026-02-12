@@ -11,7 +11,7 @@ trigger:
       - dev
 
 variables:
-  - group: jhb-dev-variables
+  - group: jhb-dev-variables 
   - group: jhb-prod-variables
 
 stages:
@@ -24,7 +24,10 @@ stages:
   jobs:
     - job: BuildJob
       pool:
-        vmImage: 'ubuntu-latest'
+        #vmImage: 'ubuntu-latest'
+        name: doujyou-self-hosted
+        demands:
+          - Agent.Name -equals doujyou-self-hosted
 
       steps:
 
