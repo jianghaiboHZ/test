@@ -1,7 +1,7 @@
 # ============================================
-# Azure DevOps CI/CD 流水线
+# Azure DevOps CI/CD 流水线（高级缓存优化版）
 # 适用于：Spring Boot + 前端分离项目
-# 前端目录：web_frontend
+# Windows 自托管 Agent
 # ============================================
 
 trigger:
@@ -11,31 +11,40 @@ trigger:
       - dev
 
 variables:
-  - group: jhb-dev-variables 
+  - group: jhb-dev-variables
   - group: jhb-prod-variables
+
+  - name: MAVEN_VERSION
+    value: '3.9.6'
+
+  - name: MAVEN_CACHE_FOLDER
+    value: '$(Pipeline.Workspace)/.maven'
+
+  - name: MAVEN_LOCAL_REPO
+    value: '$(Pipeline.Workspace)/.m2/repository'
 
 stages:
 
 # =====================================================
-# Stage 1 - Build（前后端一起构建）
+# Stage 1 - Build
 # =====================================================
 - stage: Build
   displayName: '构建应用（前后端）'
+
   jobs:
     - job: BuildJob
       pool:
-        #vmImage: 'ubuntu-latest'
         name: doujyou-self-hosted
-        demands:
-          - Agent.Name -equals doujyou-self-hosted
 
       steps:
 
-        # 1️⃣ 安装 JDK 21
+        # 1️⃣ 使用 JDK 21
         - task: JavaToolInstaller@0
           inputs:
             versionSpec: '21'
-          displayName: '安装 JDK 21'
+            jdkArchitectureOption: 'x64'
+            jdkSourceOption: 'PreInstalled'
+          displayName: '使用 JDK 21'
 
         # 2️⃣ 安装 Node.js
         - task: NodeTool@0
@@ -53,32 +62,80 @@ stages:
           displayName: '缓存 node_modules'
 
         # 4️⃣ 构建前端
-        - script: |
+        - powershell: |
             cd web_frontend
             npm ci
             npm run build
           displayName: '编译前端'
 
-        # 5️⃣ 将前端 dist 复制到 Spring Boot 静态目录
+        # 5️⃣ 复制前端到后端
         - task: CopyFiles@2
           inputs:
             sourceFolder: '$(System.DefaultWorkingDirectory)/web_frontend/dist'
             contents: '**'
             targetFolder: '$(System.DefaultWorkingDirectory)/src/main/resources/static'
             overwrite: true
-          displayName: '复制前端文件到后端'
+          displayName: '复制前端到后端'
 
-        # 6️⃣ Maven 打包
-        - task: Maven@4
+        # 6️⃣ 缓存 Maven 安装目录
+        - task: Cache@2
           inputs:
-            mavenPomFile: 'pom.xml'
-            goals: 'clean package'
-          displayName: 'Maven 打包'
+            key: '"maven" | "$(MAVEN_VERSION)"'
+            path: '$(MAVEN_CACHE_FOLDER)'
+          displayName: '缓存 Maven'
 
-        # 7️⃣ 发布 JAR
+        # 7️⃣ 初始化 Maven（不存在则下载）
+        - powershell: |
+
+            $mavenHome = "$(MAVEN_CACHE_FOLDER)\apache-maven-$(MAVEN_VERSION)"
+
+            if (!(Test-Path $mavenHome)) {
+              Write-Host "Downloading Maven $(MAVEN_VERSION)..."
+
+              New-Item -ItemType Directory -Force -Path "$(MAVEN_CACHE_FOLDER)"
+
+              $zipPath = "$(MAVEN_CACHE_FOLDER)\maven.zip"
+
+              Invoke-WebRequest `
+                -Uri "https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip" `
+                -OutFile $zipPath
+
+              Expand-Archive $zipPath -DestinationPath "$(MAVEN_CACHE_FOLDER)" -Force
+            }
+
+            $env:MAVEN_HOME = $mavenHome
+            $env:PATH = "$mavenHome\bin;$env:PATH"
+
+            mvn -version
+          displayName: '初始化 Maven'
+
+        # 8️⃣ 缓存 Maven 本地仓库
+        - task: Cache@2
+          inputs:
+            key: '"m2" | "$(Agent.OS)" | pom.xml'
+            restoreKeys: |
+              m2 | "$(Agent.OS)"
+            path: '$(MAVEN_LOCAL_REPO)'
+          displayName: '缓存 Maven 本地仓库'
+
+        # 9️⃣ Maven 构建
+        - powershell: |
+
+            $mavenHome = "$(MAVEN_CACHE_FOLDER)\apache-maven-$(MAVEN_VERSION)"
+            $env:MAVEN_HOME = $mavenHome
+            $env:PATH = "$mavenHome\bin;$env:PATH"
+
+            New-Item -ItemType Directory -Force -Path "$(MAVEN_LOCAL_REPO)"
+
+            mvn clean package `
+              -Dmaven.repo.local=$(MAVEN_LOCAL_REPO) `
+              -DskipTests
+          displayName: 'Maven 构建'
+
+        # 🔟 发布 JAR
         - task: PublishBuildArtifacts@1
           inputs:
-            PathtoPublish: '$(System.DefaultWorkingDirectory)/target/*.jar'
+            PathtoPublish: '$(System.DefaultWorkingDirectory)/target'
             ArtifactName: 'app_jar'
           displayName: '发布构建产物'
 
@@ -93,7 +150,6 @@ stages:
 
   jobs:
     - deployment: DeployDevJob
-      displayName: '部署到 Dev'
       environment: 'dev'
 
       strategy:
@@ -111,7 +167,7 @@ stages:
 
 
 # =====================================================
-# Stage 3 - Prod 部署（带审批）
+# Stage 3 - Prod 部署
 # =====================================================
 - stage: Deploy_Prod
   displayName: '部署到生产环境'
@@ -120,7 +176,6 @@ stages:
 
   jobs:
     - deployment: DeployProdJob
-      displayName: '部署到 Prod'
       environment: 'prod'
 
       strategy:
