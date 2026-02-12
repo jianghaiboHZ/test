@@ -2,7 +2,7 @@
 # Azure DevOps CI/CD 流水线
 # Spring Boot + 前后端分离
 # Windows 自托管 Agent
-# 企业稳定最终修复版（已彻底修复 Maven 目录问题）
+# 企业稳定最终版（含发布JAR整理机制）
 # ============================================
 
 trigger:
@@ -56,6 +56,7 @@ stages:
             path: '$(TOOL_CACHE)'
           displayName: '缓存工具目录'
 
+        # ---------- JDK ----------
         - powershell: |
             $jdkRoot = "$(TOOL_CACHE)"
             $jdkFolder = Get-ChildItem $jdkRoot -Directory -Filter "jdk-$(JDK_VERSION)*" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -82,6 +83,7 @@ stages:
             java -version
           displayName: '初始化 JDK'
 
+        # ---------- Node ----------
         - powershell: |
             $nodeRoot = "$(TOOL_CACHE)"
             $nodeFolder = "$nodeRoot\node-v$(NODE_VERSION)-win-x64"
@@ -124,6 +126,7 @@ stages:
             overwrite: true
           displayName: '复制前端到后端'
 
+        # ---------- Maven ----------
         - powershell: |
             $mavenRoot = "$(TOOL_CACHE)"
             $mavenFolder = "$mavenRoot\apache-maven-$(MAVEN_VERSION)"
@@ -142,9 +145,7 @@ stages:
             $env:MAVEN_HOME = $mavenFolder
             $env:PATH = "$mavenFolder\bin;$env:PATH"
 
-            Write-Host "##vso[task.setvariable variable=MAVEN_HOME]$mavenFolder"
             Write-Host "##vso[task.prependpath]$mavenFolder\bin"
-
             mvn -version
           displayName: '初始化 Maven'
 
@@ -155,34 +156,47 @@ stages:
           displayName: '缓存 Maven 仓库'
 
         - powershell: |
-
-            Write-Host "当前目录："
-            Get-Location
-
-            Write-Host "强制切换到源码目录..."
             Set-Location "$(Build.SourcesDirectory)"
-
-            Write-Host "切换后目录："
-            Get-Location
-            Get-ChildItem
-
-            if (!(Test-Path "pom.xml")) {
-                Write-Error "❌ pom.xml not found!"
-                exit 1
-            }
-
             New-Item -ItemType Directory -Force -Path "$(MAVEN_LOCAL_REPO)"
 
             mvn clean package `
               -T 1C `
               "-Dmaven.repo.local=$(MAVEN_LOCAL_REPO)" `
               -DskipTests
-
           displayName: 'Maven 构建'
+
+        # =================================================
+        # ⭐ 企业级新增步骤：整理唯一发布 JAR
+        # =================================================
+        - powershell: |
+            $targetDir = "$(Build.SourcesDirectory)/target"
+            $deployDir = "$(Build.SourcesDirectory)/deploy"
+
+            New-Item -ItemType Directory -Force -Path $deployDir
+
+            $jar = Get-ChildItem $targetDir -Filter "*.jar" |
+                   Where-Object {
+                       $_.Name -notmatch "original" -and
+                       $_.Name -notmatch "sources" -and
+                       $_.Name -notmatch "tests"
+                   } |
+                   Sort-Object LastWriteTime -Descending |
+                   Select-Object -First 1
+
+            if (!$jar) {
+                Write-Error "未找到可发布的 JAR 文件"
+                exit 1
+            }
+
+            Copy-Item $jar.FullName "$deployDir/app.jar" -Force
+
+            Write-Host "最终发布文件："
+            Get-ChildItem $deployDir
+          displayName: '整理发布 JAR'
 
         - task: PublishBuildArtifacts@1
           inputs:
-            PathtoPublish: '$(Build.SourcesDirectory)/target'
+            PathtoPublish: '$(Build.SourcesDirectory)/deploy'
             ArtifactName: 'app_jar'
           displayName: '发布构建产物'
 
@@ -213,7 +227,7 @@ stages:
                   azureSubscription: 'toyotecdap-test'
                   appType: 'webAppLinux'
                   appName: '$(APP_SERVICE_NAME)'
-                  package: '$(Pipeline.Workspace)/app_jar/*.jar'
+                  package: '$(Pipeline.Workspace)/app_jar/app.jar'
                   runtimeStack: 'JAVA|21'
 
 
@@ -243,5 +257,5 @@ stages:
                   azureSubscription: 'toyotecdap-test'
                   appType: 'webAppLinux'
                   appName: '$(PROD_APP_SERVICE_NAME)'
-                  package: '$(Pipeline.Workspace)/app_jar/*.jar'
+                  package: '$(Pipeline.Workspace)/app_jar/app.jar'
                   runtimeStack: 'JAVA|21'
