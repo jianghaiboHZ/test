@@ -2,7 +2,7 @@
 # Azure DevOps CI/CD 流水线
 # Spring Boot + 前后端分离
 # Windows 自托管 Agent
-# 企业级稳定终极版（增强修复）
+# 企业稳定无锁终极版
 # ============================================
 
 trigger:
@@ -37,7 +37,7 @@ stages:
 # Stage 1 - Build
 # =====================================================
 - stage: Build
-  displayName: '构建应用（企业稳定版）'
+  displayName: '构建应用（企业稳定无锁版）'
 
   jobs:
     - job: BuildJob
@@ -47,7 +47,7 @@ stages:
       steps:
 
 # -----------------------------------------------------
-# 0️⃣ 创建工具目录（防止缓存还原失败）
+# 0️⃣ 初始化工具目录
 # -----------------------------------------------------
         - powershell: |
             New-Item -ItemType Directory -Force -Path "$(TOOL_CACHE)"
@@ -63,31 +63,29 @@ stages:
           displayName: '缓存工具目录'
 
 # -----------------------------------------------------
-# 2️⃣ 自动安装 JDK 21（稳定修复版）
+# 2️⃣ 初始化 JDK（无 Rename 版本）
 # -----------------------------------------------------
         - powershell: |
 
-            $jdkHome = "$(TOOL_CACHE)\jdk-$(JDK_VERSION)"
+            $jdkRoot = "$(TOOL_CACHE)"
+            $jdkFolder = Get-ChildItem $jdkRoot -Directory -Filter "jdk-$(JDK_VERSION)*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-            if (!(Test-Path "$jdkHome\bin\java.exe")) {
+            if (!$jdkFolder) {
 
               Write-Host "Installing JDK $(JDK_VERSION)..."
 
-              $zipPath = "$(TOOL_CACHE)\jdk.zip"
+              $zipPath = "$jdkRoot\jdk.zip"
 
               Invoke-WebRequest `
                 -Uri "https://api.adoptium.net/v3/binary/latest/$(JDK_VERSION)/ga/windows/x64/jdk/hotspot/normal/eclipse" `
                 -OutFile $zipPath
 
-              Expand-Archive $zipPath -DestinationPath "$(TOOL_CACHE)" -Force
+              Expand-Archive $zipPath -DestinationPath $jdkRoot -Force
 
-              $folder = Get-ChildItem "$(TOOL_CACHE)" |
-                        Where-Object { $_.PSIsContainer -and $_.Name -like "jdk-*" } |
-                        Sort-Object LastWriteTime -Descending |
-                        Select-Object -First 1
-
-              Rename-Item $folder.FullName $jdkHome -Force
+              $jdkFolder = Get-ChildItem $jdkRoot -Directory -Filter "jdk-*" | Select-Object -First 1
             }
+
+            $jdkHome = $jdkFolder.FullName
 
             Write-Host "##vso[task.setvariable variable=JAVA_HOME]$jdkHome"
             Write-Host "##vso[task.prependpath]$jdkHome\bin"
@@ -96,28 +94,27 @@ stages:
           displayName: '初始化 JDK'
 
 # -----------------------------------------------------
-# 3️⃣ 自动安装 Node.js
+# 3️⃣ 初始化 Node（无 Rename 版本）
 # -----------------------------------------------------
         - powershell: |
 
-            $nodeHome = "$(TOOL_CACHE)\node"
+            $nodeRoot = "$(TOOL_CACHE)"
+            $nodeFolder = "$nodeRoot\node-v$(NODE_VERSION)-win-x64"
 
-            if (!(Test-Path "$nodeHome\node.exe")) {
+            if (!(Test-Path "$nodeFolder\node.exe")) {
 
               Write-Host "Installing Node $(NODE_VERSION)..."
 
-              $zipPath = "$(TOOL_CACHE)\node.zip"
+              $zipPath = "$nodeRoot\node.zip"
 
               Invoke-WebRequest `
                 -Uri "https://nodejs.org/dist/v$(NODE_VERSION)/node-v$(NODE_VERSION)-win-x64.zip" `
                 -OutFile $zipPath
 
-              Expand-Archive $zipPath -DestinationPath "$(TOOL_CACHE)" -Force
-
-              Rename-Item "$(TOOL_CACHE)\node-v$(NODE_VERSION)-win-x64" $nodeHome -Force
+              Expand-Archive $zipPath -DestinationPath $nodeRoot -Force
             }
 
-            Write-Host "##vso[task.prependpath]$nodeHome"
+            Write-Host "##vso[task.prependpath]$nodeFolder"
 
             node -v
             npm -v
@@ -142,7 +139,7 @@ stages:
           displayName: '构建前端'
 
 # -----------------------------------------------------
-# 6️⃣ 复制前端资源到 Spring Boot
+# 6️⃣ 复制前端资源到后端
 # -----------------------------------------------------
         - task: CopyFiles@2
           inputs:
@@ -153,35 +150,34 @@ stages:
           displayName: '复制前端到后端'
 
 # -----------------------------------------------------
-# 7️⃣ 自动安装 Maven
+# 7️⃣ 初始化 Maven（无 Rename 版本）
 # -----------------------------------------------------
         - powershell: |
 
-            $mavenHome = "$(TOOL_CACHE)\maven-$(MAVEN_VERSION)"
+            $mavenRoot = "$(TOOL_CACHE)"
+            $mavenFolder = "$mavenRoot\apache-maven-$(MAVEN_VERSION)"
 
-            if (!(Test-Path "$mavenHome\bin\mvn.cmd")) {
+            if (!(Test-Path "$mavenFolder\bin\mvn.cmd")) {
 
               Write-Host "Installing Maven $(MAVEN_VERSION)..."
 
-              $zipPath = "$(TOOL_CACHE)\maven.zip"
+              $zipPath = "$mavenRoot\maven.zip"
 
               Invoke-WebRequest `
                 -Uri "https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip" `
                 -OutFile $zipPath
 
-              Expand-Archive $zipPath -DestinationPath "$(TOOL_CACHE)" -Force
-
-              Rename-Item "$(TOOL_CACHE)\apache-maven-$(MAVEN_VERSION)" $mavenHome -Force
+              Expand-Archive $zipPath -DestinationPath $mavenRoot -Force
             }
 
-            Write-Host "##vso[task.setvariable variable=MAVEN_HOME]$mavenHome"
-            Write-Host "##vso[task.prependpath]$mavenHome\bin"
+            Write-Host "##vso[task.setvariable variable=MAVEN_HOME]$mavenFolder"
+            Write-Host "##vso[task.prependpath]$mavenFolder\bin"
 
             mvn -version
           displayName: '初始化 Maven'
 
 # -----------------------------------------------------
-# 8️⃣ 缓存 Maven 本地仓库
+# 8️⃣ 缓存 Maven 仓库
 # -----------------------------------------------------
         - task: Cache@2
           inputs:
@@ -190,7 +186,7 @@ stages:
           displayName: '缓存 Maven 仓库'
 
 # -----------------------------------------------------
-# 9️⃣ Maven 构建（并发 + 稳定）
+# 9️⃣ Maven 构建
 # -----------------------------------------------------
         - powershell: |
 
@@ -203,7 +199,7 @@ stages:
           displayName: 'Maven 构建'
 
 # -----------------------------------------------------
-# 🔟 发布 JAR（路径修复版）
+# 🔟 发布 JAR
 # -----------------------------------------------------
         - task: PublishBuildArtifacts@1
           inputs:
