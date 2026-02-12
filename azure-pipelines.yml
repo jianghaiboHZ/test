@@ -2,7 +2,7 @@
 # Azure DevOps CI/CD 流水线
 # Spring Boot + 前后端分离
 # Windows 自托管 Agent
-# 企业稳定最终修复版（已修复 Maven 执行目录问题）
+# 企业稳定最终修复版（已彻底修复 Maven 目录问题）
 # ============================================
 
 trigger:
@@ -29,6 +29,7 @@ variables:
 
   - name: MAVEN_LOCAL_REPO
     value: '$(Pipeline.Workspace)/.m2/repository'
+
 
 stages:
 
@@ -130,12 +131,12 @@ stages:
           displayName: '缓存 node_modules'
 
 # -----------------------------------------------------
-# 5️⃣ 构建前端（明确目录）
+# 5️⃣ 构建前端（强制目录）
 # -----------------------------------------------------
         - powershell: |
+            Set-Location "$(Build.SourcesDirectory)/web_frontend"
             npm ci
             npm run build
-          workingDirectory: '$(Build.SourcesDirectory)/web_frontend'
           displayName: '构建前端'
 
 # -----------------------------------------------------
@@ -188,16 +189,32 @@ stages:
           displayName: '缓存 Maven 仓库'
 
 # -----------------------------------------------------
-# 9️⃣ Maven 构建（关键修复：指定目录）
+# 9️⃣ Maven 构建（彻底修复版）
 # -----------------------------------------------------
         - powershell: |
+
+            Write-Host "当前目录："
+            Get-Location
+
+            Write-Host "强制切换到源码目录..."
+            Set-Location "$(Build.SourcesDirectory)"
+
+            Write-Host "切换后目录："
+            Get-Location
+            Get-ChildItem
+
+            if (!(Test-Path "pom.xml")) {
+                Write-Error "❌ pom.xml not found!"
+                exit 1
+            }
+
             New-Item -ItemType Directory -Force -Path "$(MAVEN_LOCAL_REPO)"
 
             mvn clean package `
               -T 1C `
               -Dmaven.repo.local=$(MAVEN_LOCAL_REPO) `
               -DskipTests
-          workingDirectory: '$(Build.SourcesDirectory)'
+
           displayName: 'Maven 构建'
 
 # -----------------------------------------------------
@@ -208,6 +225,7 @@ stages:
             PathtoPublish: '$(Build.SourcesDirectory)/target'
             ArtifactName: 'app_jar'
           displayName: '发布构建产物'
+
 
 # =====================================================
 # Stage 2 - Dev 部署
@@ -237,6 +255,7 @@ stages:
                   appName: '$(APP_SERVICE_NAME)'
                   package: '$(Pipeline.Workspace)/app_jar/*.jar'
                   runtimeStack: 'JAVA|21'
+
 
 # =====================================================
 # Stage 3 - Prod 部署
