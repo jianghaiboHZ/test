@@ -2,7 +2,7 @@
 # Azure DevOps CI/CD 流水线
 # Spring Boot + 前后端分离
 # Windows 自托管 Agent
-# 企业稳定无锁终极版
+# 企业稳定最终修复版
 # ============================================
 
 trigger:
@@ -37,7 +37,7 @@ stages:
 # Stage 1 - Build
 # =====================================================
 - stage: Build
-  displayName: '构建应用（企业稳定无锁版）'
+  displayName: '构建应用（企业最终稳定版）'
 
   jobs:
     - job: BuildJob
@@ -63,7 +63,7 @@ stages:
           displayName: '缓存工具目录'
 
 # -----------------------------------------------------
-# 2️⃣ 初始化 JDK（无 Rename 版本）
+# 2️⃣ 初始化 JDK（即时生效版）
 # -----------------------------------------------------
         - powershell: |
 
@@ -87,6 +87,11 @@ stages:
 
             $jdkHome = $jdkFolder.FullName
 
+            # 当前步骤立即生效
+            $env:JAVA_HOME = $jdkHome
+            $env:PATH = "$jdkHome\bin;$env:PATH"
+
+            # 后续步骤生效
             Write-Host "##vso[task.setvariable variable=JAVA_HOME]$jdkHome"
             Write-Host "##vso[task.prependpath]$jdkHome\bin"
 
@@ -94,7 +99,7 @@ stages:
           displayName: '初始化 JDK'
 
 # -----------------------------------------------------
-# 3️⃣ 初始化 Node（无 Rename 版本）
+# 3️⃣ 初始化 Node（即时生效版）
 # -----------------------------------------------------
         - powershell: |
 
@@ -114,6 +119,10 @@ stages:
               Expand-Archive $zipPath -DestinationPath $nodeRoot -Force
             }
 
+            # 当前步骤立即生效
+            $env:PATH = "$nodeFolder;$env:PATH"
+
+            # 后续步骤生效
             Write-Host "##vso[task.prependpath]$nodeFolder"
 
             node -v
@@ -150,7 +159,7 @@ stages:
           displayName: '复制前端到后端'
 
 # -----------------------------------------------------
-# 7️⃣ 初始化 Maven（无 Rename 版本）
+# 7️⃣ 初始化 Maven（即时生效版）
 # -----------------------------------------------------
         - powershell: |
 
@@ -170,6 +179,11 @@ stages:
               Expand-Archive $zipPath -DestinationPath $mavenRoot -Force
             }
 
+            # 当前步骤立即生效
+            $env:MAVEN_HOME = $mavenFolder
+            $env:PATH = "$mavenFolder\bin;$env:PATH"
+
+            # 后续步骤生效
             Write-Host "##vso[task.setvariable variable=MAVEN_HOME]$mavenFolder"
             Write-Host "##vso[task.prependpath]$mavenFolder\bin"
 
